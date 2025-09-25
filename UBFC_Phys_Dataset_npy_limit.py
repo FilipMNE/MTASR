@@ -9,11 +9,26 @@ import yaml
 
 yaml_file = "./setting.yaml"
 cfg = yaml.safe_load(open(yaml_file, 'r'))
+
+# Ovo podesi prije pokretanja
+segment_id = 'segment_30s'  # "no_segmentation" ili "segment_10s" ili "segment_30s"
+framerate_id = 'framerate_1'  # "framerate_1" ili "framerate_5"
+face_detection_model = 'faceBoxes' # 'yolo' ili 'faceBoxes'
+
+ubfc_filename = cfg[segment_id][framerate_id]['ubfc_npy_filename']
+ubfc_file_path = f"ubfc_npy_files/{face_detection_model}/{ubfc_filename}.npy"
+
 T1_s, T2_s, T3_s = cfg['dataset']['T1_selected'], cfg['dataset']['T2_selected'], cfg['dataset']['T3_selected']
 T1_selected, T2_selected, T3_selected = set(T1_s), set(T2_s), set(T3_s)
 
 
 def data_selected():
+    '''
+    vraca 3 liste (trenutno su duzine 80):
+    person_list: svi T1_selected + svi T3_selected + T2_selected koji nijesu u T3_selected
+    tasks: svi T1_selected -> 1, svi T3_selected -> 3, svi T2_selected koji nijesu u T3_selected -> 2
+    labels: svi T1_selected -> 0, ostali -> 1
+    '''
     stress_2 = T2_selected - (T2_selected & T3_selected)
 
     person_list, tasks, labels = [], [], []
@@ -51,11 +66,18 @@ def data_selected_level(data_root):
 
 
 class rPPG_Dataset(Dataset):
+    '''
+    you need your data in a format that is:
+        Efficient to load in batches
+        Compatible with PyTorch's DataLoader
+    '''
     def __init__(self, person_list, task_s, label_s):
         super(rPPG_Dataset, self).__init__()
 
-        data = np.load(r"ubfc_phys_new.npy", allow_pickle=True)
+        print(f"Loading data from {ubfc_file_path}")
+        data = np.load(ubfc_file_path, allow_pickle=True)
         needed_data = None
+        # Filters the dataset to only include samples that match the given person, task, and label. -> from split
         for _, (person, task, label) in enumerate(zip(person_list, task_s, label_s)):
             selected_data = data[(data[:, 0] == person) & (data[:, 1] == task) & (data[:, 3] == label)]
             if needed_data is None:
@@ -71,15 +93,20 @@ class rPPG_Dataset(Dataset):
         self.VPG = torch.Tensor([ppg.astype(np.float32) for ppg in needed_data[:, 6]])
         self.vpg_peak = torch.Tensor([peak_.astype(np.uint8) for peak_ in needed_data[:, 7]])
         self.HR = torch.Tensor(needed_data[:, 8].astype(np.float32))
-        self.gaze = torch.Tensor(
-            [[gaze_[i].astype(np.float32) for i in range(6)] for gaze_ in needed_data[:, 9:15]])
-        self.pose = torch.Tensor(
-            [[pose_[i].astype(np.float32) for i in range(3)] for pose_ in needed_data[:, 15:18]])
+        # makao sam self.gaze i self.pose, jer su vezane sa movement info, ne moze se izracunati bez njega
+        # self.gaze = torch.Tensor(
+        #     [[gaze_[i].astype(np.float32) for i in range(6)] for gaze_ in needed_data[:, 9:15]])
+        # self.pose = torch.Tensor(
+        #     [[pose_[i].astype(np.float32) for i in range(3)] for pose_ in needed_data[:, 15:18]])
+        
 
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, item):
+        '''Retrieves a single data sample, formatted properly for input into a PyTorch model.
+            Converts signals into appropriate tensor formats (float, long) and reshapes some for compatibility (e.g., unsqueeze(dim=0) adds a channel dimension).
+        '''
         return self.labels[item].to(torch.long), \
                self.tasks[item].to(torch.long), \
                self.level[item].to(torch.long), \
@@ -88,15 +115,17 @@ class rPPG_Dataset(Dataset):
                self.VPG[item].unsqueeze(dim=0).to(torch.float), \
                self.vpg_peak[item].to(torch.float), \
                self.HR[item].to(torch.float), \
-               self.gaze[item].to(torch.float), \
-               self.pose[item].to(torch.float)
+            # makao sam self.gaze i self.pose, jer su vezane sa movement info, ne moze se izracunati bez njega
+            #    self.gaze[item].to(torch.float), \
+            #    self.pose[item].to(torch.float)
 
 
 class rPPG_Dataset_level(Dataset):
     def __init__(self, person_list, task_s, level_s):
         super(rPPG_Dataset_level, self).__init__()
 
-        data = np.load(r"ubfc_phys_new.npy", allow_pickle=True)
+        print(f"Loading data from {ubfc_file_path}")
+        data = np.load(ubfc_file_path, allow_pickle=True)
         needed_data = None
         for _, (person, task, level_) in enumerate(zip(person_list, task_s, level_s)):
             selected_data = data[(data[:, 0] == person) & (data[:, 1] == task) & (data[:, 2] == level_)]
@@ -113,10 +142,11 @@ class rPPG_Dataset_level(Dataset):
         self.VPG = torch.Tensor([ppg.astype(np.float32) for ppg in needed_data[:, 6]])
         self.vpg_peak = torch.Tensor([peak_.astype(np.uint8) for peak_ in needed_data[:, 7]])
         self.HR = torch.Tensor(needed_data[:, 8].astype(np.float32))
-        self.gaze = torch.Tensor(
-            [[gaze_[i].astype(np.float32) for i in range(6)] for gaze_ in needed_data[:, 9:15]])
-        self.pose = torch.Tensor(
-            [[pose_[i].astype(np.float32) for i in range(3)] for pose_ in needed_data[:, 15:18]])
+        # makao sam self.gaze i self.pose, jer su vezane sa movement info, ne moze se izracunati bez njega
+        # self.gaze = torch.Tensor(
+        #     [[gaze_[i].astype(np.float32) for i in range(6)] for gaze_ in needed_data[:, 9:15]])
+        # self.pose = torch.Tensor(
+        #     [[pose_[i].astype(np.float32) for i in range(3)] for pose_ in needed_data[:, 15:18]])
 
     def __len__(self):
         return len(self.labels)

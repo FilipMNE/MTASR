@@ -45,9 +45,9 @@ def ASF(C):
 
 class Pulse():
     def __init__(self, framerate, signal_size):
-        self.framerate = float(framerate)
-        self.signal_size = signal_size
-        self.minFreq = 0.7  #
+        self.framerate = float(framerate) # video framerate -> 35
+        self.signal_size = signal_size # the number of frames -> 6300
+        self.minFreq = 0.7  # frequency limits (0.7 Hz to 3.5 Hz), corresponding to typical human heart rates (≈ 42–210 bpm).
         self.maxFreq = 3.5  #
         self.fft_spec = []
 
@@ -81,21 +81,38 @@ class Pulse():
     #
     #     return H
 
-    def get_pulse(self, mean_rgb):
-        # pre processing steps
-        C = mean_rgb.T
+    def get_pulse(self, mean_rgb): # mean_rgb.shape -> (6300, 3)
+        C = mean_rgb.T # transpose, shape becomes (3, 6300)
+        # Each row is one color channel (R, G, B), and columns represent time.
 
         # POS
-        mean_color = np.mean(C, axis=1)
-        diag_mean_color = np.diag(mean_color)
-        diag_mean_color_inv = np.linalg.inv(diag_mean_color)
-        Cn = np.matmul(diag_mean_color_inv, C)
+        mean_color = np.mean(C, axis=1) # mean po bojama, # shape: (3,)
+        diag_mean_color = np.diag(mean_color) # dijagonalna matrica (samo su dijagonale != 0) # 3×3 diagonal matrix
+        diag_mean_color_inv = np.linalg.inv(diag_mean_color) # multiplikativni inverz dijagonalne matrice
+
+        # This step removes global brightness variation — normalizing each channel by its mean.
+        # After this, Cn contains relative color changes rather than absolute intensity.
+        # produces normalized color signal.
+        Cn = np.matmul(diag_mean_color_inv, C) # Cn.shape -> (3, 6300)
+
+        # This projects the 3D color signal onto a 2D space using a transformation matrix designed to:
+        #   Emphasize chrominance (color differences),
+        #   Suppress brightness variation (luminance).
+        # This is the heart of the POS algorithm.
+        # This is part of the CHROM method — a linear projection to isolate pulse-related variations.
         projection_matrix = np.array([[0, 1, -1], [-2, 1, 1]])
-        S = np.matmul(projection_matrix, Cn)
+        S = np.matmul(projection_matrix, Cn) # S.shape -> (2, 6300)
+
+        # This step normalizes the two channels of S to have the same standard deviation.
         std = np.array([1, np.std(S[0, :]) / np.std(S[1, :])])
-        P = np.matmul(std, S)
+        P = np.matmul(std, S) # P.shape -> (1, 6300)
+
+        # detrend
+        # Removes the mean — leaving only the oscillating (AC) component,
+        # This is the final pulse signal.
         H = P - np.mean(P)
 
+        # H is a 1D NumPy array (length ~6300), representing color-based pulse signal over time.
         return H
 
     def get_rfft_hr(self, signal):

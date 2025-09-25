@@ -5,6 +5,8 @@ import torch.nn.functional as F
 import numpy as np
 import math
 import models.setting as setting
+# import setting as setting
+ 
 
 
 # class MixA_Module(nn.Module):
@@ -241,6 +243,18 @@ class JAM(nn.Module):
 
 
 class Task(nn.Module):
+    '''
+    The Task class is a feature refiner. It takes the features that were extracted by BVPFeatrueExtraction (x_16, x_32, x_64, x_128) 
+    and passes them through lightweight processing blocks to combine and strengthen the information
+
+    It has 4 small blocks, and each block:
+        1. Applies a special attention layer (ECAM, which emphasizes important features)
+        2. Runs a 1D convolution to adjust feature size
+        3. (Optionally) Downsamples the signal with MaxPool1d
+        Then, it adds the result to the corresponding input feature and sends it to the next block.
+
+        It’s gradually building up deeper features by combining and transforming earlier features (x_32, x_64, etc.).
+    '''
     def __init__(self):
         super(Task, self).__init__()
         self.block_1 = nn.Sequential(
@@ -256,7 +270,7 @@ class Task(nn.Module):
             nn.Conv1d(32, 64, 1, 1),
             # nn.BatchNorm1d(64),
             # nn.LeakyReLU(inplace=True),
-            nn.MaxPool1d(5, 5)
+            nn.MaxPool1d(5, 5)  # (Optionally) Downsamples the signal with MaxPool1d
         )
 
         self.block_3 = nn.Sequential(
@@ -286,17 +300,39 @@ class Task(nn.Module):
 
 class MetaStress(nn.Module):
     def __init__(self, classes_num=2, hidden_size=128, num_layers=2):
+        '''
+        "param classes_num: Number of output classes (stressed vs. not stressed)
+        '''
         super(MetaStress, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.bvp = BVPFeatrueExtraction()
 
-        self.state_task = Task()
+        # This module is a deep 1D convolutional neural network designed to extract rich, multi-level features 
+        # from a BVP signal (Blood Volume Pulse, a type of rPPG/PPG signal). 
+        # It combines peak detection, residual learning, attention, and progressively deeper convolutions to encode signal characteristics.
+        # It's the first stage of the MetaStress model, producing features used for stress classification and HR estimation.
+        # In MetaStress, this module is used to preprocess the PPG input, turning it into feature tensors.
+        self.bvp = BVPFeatrueExtraction() # TODO slozena CNN arhitektura
+
+        self.state_task = Task() # donekle objasnjena u klasi Task
         # self.classifier = nn.Linear(512, classes_num)
+
+        # nn.Sequential is a PyTorch utility that allows you to chain layers/modules together in a sequence. 
+        # Data flows through them in the order they are defined, one after another. It's like a pipeline.
         self.classifier = nn.Sequential(
+            # A fully connected (dense) layer.
+            # Input: a tensor of size [batch_size, 512] — output from BVPFeatrueExtraction module.
+            # Output: a tensor of size [batch_size, hidden_size], where hidden_size=512
+            # it performs output = x * W^T + b, where W and b are learnable parameters (weight and bias).
             nn.Linear(512, setting.classifier_hidden_size),
             # nn.Linear(512, 256),
+
+            # A non-linear activation function.
+            # LeakyReLu(x) = x, if x>0 else 0.01*x
             nn.LeakyReLU(),
+
+            # Another fully connected layer, this time projecting the hidden representation to the number of output classes - 2 for binary classification
+            # Output shape: [batch_size, classes_num=2]
             nn.Linear(setting.classifier_hidden_size, classes_num),
         )
 
@@ -308,7 +344,19 @@ class MetaStress(nn.Module):
         #     nn.Linear(256, 1),
         # )
 
+    # forward function - defines what happens when you pass input data through the model.
     def forward(self, x, net_type="both"):
+        '''
+        The goal of this function is to:
+            Extract features from the input signal using the bvp module
+            Use those features to either:
+                - Classify stress (net_type="classify")
+                - Estimate heart rate (HR) (net_type="hr")
+                - Do both (net_type="both")
+        '''
+        
+        # This line passes the input x (a signal like PPG) into the BVPFeatrueExtraction module, 
+        # which processes it and returns 4 levels of features (x_16 to x_128) and a peak signal.
         x_16, x_32, x_64, x_128, peak = self.bvp(x)
 
         if net_type == "classify":
@@ -335,6 +383,8 @@ class MetaStress(nn.Module):
         else:
             return out, hr, peak
 
+    # Nigdje se ne koristi
+    # This function initializes the hidden state and cell state for the LSTM layers.
     def init_hidden(self, bs, device):
         h0 = Variable(torch.zeros(self.num_layers, bs, self.hidden_size).to(device))
         c0 = Variable(torch.zeros(self.num_layers, bs, self.hidden_size).to(device))

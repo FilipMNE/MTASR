@@ -13,6 +13,8 @@ class HRV():
 
     def __init__(self, bvp, fs=35, distance=10):
         '''
+        :param distance: distance=14: the minimum distance between detected peaks in the BVP, in number of samples.
+        This controls peak detection to avoid multiple detections within a single heartbeat.
 
         :param bvp: PPG信号
         :param frame_rate: 采样频率 次/秒

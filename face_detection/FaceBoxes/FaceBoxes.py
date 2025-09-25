@@ -2,9 +2,13 @@
 
 import os.path as osp
 
+import time
 import torch
 import numpy as np
 import cv2
+from PIL import Image
+
+# da bi pokrenuo samo ovaj fajl, moras dodati FaceBox ispred svakog importa npr: from FaceBoxes.utils.prior_box import PriorBox
 
 from .utils.prior_box import PriorBox
 from .utils.nms_wrapper import nms
@@ -30,10 +34,23 @@ pretrained_path = make_abs_path('weights/FaceBoxesProd.pth')
 
 
 def viz_bbox(img, dets, wfp='out.jpg'):
+    # stara funkcija
+    # # show
+    # for b in dets:
+    #     if b[4] < vis_thres:
+    #         continue
+    #     text = "{:.4f}".format(b[4])
+    #     b = list(map(int, b))
+    #     cv2.rectangle(img, (b[0], b[1]), (b[2], b[3]), (0, 0, 255), 2)
+    #     cx = b[0]
+    #     cy = b[1] + 12
+    #     cv2.putText(img, text, (cx, cy), cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255))
+    # cv2.imwrite(wfp, img)
+    # print(f'Viz bbox to {wfp}')
+
     # show
-    for b in dets:
-        if b[4] < vis_thres:
-            continue
+    b = dets
+    if b[4] >= vis_thres:
         text = "{:.4f}".format(b[4])
         b = list(map(int, b))
         cv2.rectangle(img, (b[0], b[1]), (b[2], b[3]), (0, 0, 255), 2)
@@ -135,28 +152,56 @@ class FaceBoxes:
                 bbox = [xmin, ymin, xmax, ymax, score]
                 det_bboxes.append(bbox)
 
-        return det_bboxes
+        if len(det_bboxes) == 0:
+            return []
+        else:
+            det_bboxes.sort(key=lambda x: x[4], reverse=True)
+            return det_bboxes[0]
+        
+def cropped_img(img, rectangle):
+    xmin, ymin, xmax, ymax = rectangle[0], rectangle[1], rectangle[2], rectangle[3]
+    center_x = (xmin + xmax) / 2
+    center_y = (ymin + ymax) / 2
+    width = xmax - xmin
+    height = ymax - ymin
+
+    cropped_image = cv2.getRectSubPix(img, patchSize=(int(np.round(width)), int(np.round(height))), center=(center_x, center_y))
+    return cropped_image
 
 
 def main():
-    face_boxes = FaceBoxes(timer_flag=True)
+    face_boxes = FaceBoxes()
 
-    fn = 'trump_hillary.jpg'
-    img_fp = f'../examples/inputs/{fn}'
-    img = cv2.imread(img_fp)
-    print(f'input shape: {img.shape}')
+    # fn = 'trump_hillary.jpg'
+    # img_fp = f'../examples/inputs/{fn}'
+    # img = cv2.imread(img_fp)
+
+    vidcap = cv2.VideoCapture('/Volumes/stari/UBFC-Phys/yolo/segment_30s/dataset/s1/vid_s1_T1_seg03.avi')
+    success, img = vidcap.read()
+    if not success:
+        print('Failed to read image from video')
+        return
+    # img = cv2.imread('/Volumes/stari/UBFC-Phys/segment_30s/face_not_found/s2_T3_seg00_frame54.jpg')
+
+    # print(f'input shape: {img.shape}')
     dets = face_boxes(img)  # xmin, ymin, w, h
     # print(dets)
 
     # repeating inference for `n` times
-    n = 10
-    for i in range(n):
-        dets = face_boxes(img)
+    # start_time = time.time()
+    # n = 10
+    # for i in range(n):
+    #     dets = face_boxes(img)
+    # print(f'Inference time for {n} iterations: {time.time() - start_time:.2f}s')
 
-    wfn = fn.replace('.jpg', '_det.jpg')
-    wfp = osp.join('../examples/results', wfn)
-    viz_bbox(img, dets, wfp)
+    cropped_image = cropped_img(img, dets)
+    cv2.imwrite('cropped_face.jpg', cropped_image)
 
+    # wfn = fn.replace('.jpg', '_det.jpg')
+    # wfp = osp.join('../examples/results', wfn)
+    viz_bbox(img, dets, 'faceBoxesOutput.jpg')
 
 if __name__ == '__main__':
     main()
+
+    

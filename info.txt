@@ -1,0 +1,97 @@
+TODO:
+--- The data show that the best performance occurs when α = 0.5 and β = 0.5 for stress state recognition => naci najbolje parametre
+--- istreniraj na cijelom datasetu koristeci istu mrezu
+--- integracija deep network metode za ekstrakciju rPPG signala
+******************************************************************************************
+DONE:
+--- drop_num koliko da se stavi kad je video segmentiran? -> Stavi drop_num samo na prvi segment, na ostale ne moras
+--- smanji vrijeme konverzije: procitani_frejm ==> .png format, funkcija cv2.imencode(), fajl pos_rrpg_v3.py -> rijeseno koriscenjem FaceBoxes modela
+--- ako moze, smanji vrijeme YOLO predikcije, funckija eval_image, fajl pos_rrpg_v3.py
+    (npr. ne pozivaj YOLO za svaki frejm, nego svaki 2/3/5) -> rijeseno koriscenjem FaceBoxes modela
+--- pitaj autora za frame_rate, je li svaki frame neophodan i kako ce uticati na performanse (ili testiraj) -> testiraj 1/2/3/5 i izaberi
+--- zasto se ne dobija isti rppg za iste videe, samo druge duzine? -> zbog true_divide?
+--- napravi novi pos_rppg koji koristi FaceBoxes model, a ne Yolo ==> FaceBoxes predvidja 500 frejmova za 20-30 sekunid, yolo za 39-45 sekundi 
+    -koristi face_detection/FaceBoxes/FaceBoxes.py i zamijeni YOLO
+    -ne dobijaju se isti bounding boxes kada se koristi Yolo i FaceBoxes, Yolo uzima siri box ==> performanse slicne, malo bolji faceBoxes
+******************************************************************************************
+WORKFLOW:
+-- prije pokretanja bilo koje skripte, promijeni root_dir, face_detection_model, segment_id i framerate_id
+1. prvo se pokrece pos_rppg.py -> iz snimaka vadi rppg -> procitaj MTASR rad da shvatis kako radi POS algoritam
+2. onda se pokrece data_preprocess.py -> iz bvp.csv i rppg.csv generise ubfc_phys_new.npy, nad kojim se trenira model
+3. na kraju se pokrece train_state (ili train_level) -> procitaj kako izgleda mreza i loss funckije
+4. za predikciju iz snimka, pokrece se predict_from_video_batches.py (najbrza verzija)
+
+- ako se radi pos_rppg iz obicnog 3-min videa, pokrece se pos_rppg_v3.py ili pos_rppg_segmented.py sa podesenim parametrima,
+  a ako se radi iz bilo kog segmentiranog, pokrece se pos_rppg_segmented.py.
+- ako se koristi FaceBoxes model, pokrece se pos_rppg_faceboxes.py sa podesenim paramterima
+******************************************************************************************
+TERMINOLOGIJA:
+_v2 -> izbaceno je bespotrebno pisanje i citanje sa diska zbog konverzije u odgovarajuci tip podataka
+_v3, _batches -> prvo se procita batch frejmova (npr. 600), oni se obrade, pa se cita novi batch itd. -> smanjuje vrijeme izvrsavanja jer izbacuje konstantni naizmjenicni CPU/DISK rad
+******************************************************************************************
+ANALIZA KODA:
+***********************************     pos_rppg_v3.py:     ***********************************
+yoloModel:
+- Reads a BytesIO image,
+- Detects a face using YOLO,
+- Crops a square region around the face,
+- Returns it as a NumPy array.
+***Prespora funkcija --> eval_image()
+***Sada se koristi FaceBoxes model -> procitaj MTASR rad
+
+skin_segment: - objasnjena i u komentarima u kodu
+- Converts to a color space where skin tones are easier to isolate: yCrCb (Y: brightness (luminance), Cr/ Cb: chrominance (color components).)
+- Applies thresholds to Cr, Cb, and Y values to detect skin. (All three conditions must be satisfied simultaneously to label a pixel as "skin".)
+- Builds a mask highlighting probable skin regions.
+- Applies the mask to the original image to segment out skin.
+
+mean_bgr = np.true_divide(batch.sum(axis=(1, 2)), (batch != 0).sum(axis=(1, 2)) + 1e-6)
+  - batch.sum(axis=(1, 2)) --> tells NumPy to sum over the height and width dimensions (128 × 128 pixels).
+  - This leaves: 6300 images, For each image, it returns one sum per channel (B, G, R). --> output shape: (6300, 3)
+  - batch != 0 --> Produces a boolean array of the same shape (6300, 128, 128, 3) (True where pixel value is !=0)
+  - .sum(axis=(1, 2)) --> You get, for each image, the count of non-zero pixels per channel. --> Result shape: (6300, 3)
+  - + 1e-6 --> Adds a tiny value (epsilon) to prevent division by zero if any channel has only zero pixels
+  - np.true_divide() --> obicni division element-wise
+  - ostatak koda: mijenja redosljed boja iz BGR u RGB
+
+get_rppg(mean_rgb, person, task, encode_format): (objasnjeno -> pogledaj funkciju get_pulse iz POS.py)
+ GOAL: To extract a remote photoplethysmography (rPPG) signal from the average RGB values over time (mean_rgb) extracted from skin pixels.
+ - This function is computing an estimated pulse signal from that data using the POS (Plane-Orthogonal-to-Skin) algorithm, 
+  a common method in remote photoplethysmography (rPPG) to extract heart rate from color changes in facial skin over time.
+  - Extract a 1D signal H representing pulse (heart rate) from a sequence of RGB color values measured over time.
+
+***********************************     data_preprocess.py:     ***********************************
+- izvrsava se brzo
+objasnjeno u komentarima u kodu
+***********************************    train_state.py:    ***********************************
+- stratified K fold: dataset se dijeli u K (=10) jednakih grupa: K1, K2,..., K10.
+    U prvom foldu se prvih (K-1) koristi za trening, a K10 za test => ovo se izvrsava 10 puta, svaki put sa razlicitim trening/test splitom
+    Stratified: uzima istu razmjeru labela u svakom splitu
+    Na kraju se dobije 10 razlicitih modela i uporede se njihove performanse (accuracy, precision, F1 score,...)
+
+- train_loader = DataLoader(train_dataset, batch_size=batch_size)
+    "~torch.utils.data.DataLoader by default constructs an index sampler that yields integral indices.
+    To make it work with a map-style dataset with non-integral indices/keys, a custom sampler must be provided."
+    - The DataLoader class in PyTorch is used to efficiently load data in batches from a dataset, like your rPPG_Dataset. It handles:
+        Batching: Groups samples into batches of size batch_size
+        Shuffling (optional): Randomizes data order for training
+        Parallel loading (optional): Uses multiple workers to speed up data loading
+
+- The reason the training is split into HR-only first, then HR + classification later is to improve learning stability and performance. Here's why:
+  1. Heart rate (HR) estimation is often easier and more direct than stress classification because:
+      HR is a continuous and objective signal.
+      Stress classification is higher-level and more abstract, often requiring understanding patterns in HR and other features.
+  2. Step-by-step learning = better feature extraction. By starting with HR:
+      The feature extractor (e.g., BVPFeatrueExtraction) learns to focus on relevant physiological signals.
+      Then, the classifier (in the "both" phase) can build on those already-learned features for stress prediction.
+      This is similar to transfer learning or curriculum learning — teach the network simpler tasks first, then harder ones.
+  3. Reduces overfitting and confusion early on. If the model tried to learn both tasks at once from the beginning, it might:
+      Struggle to balance the two losses.
+      Learn less optimal features for either task.
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+    SHORTER
+
+- u prosjeku 45 sekundi da izvadi rppg iz videa od 10 sekundi, 22-29 ako obradjuje svaki drugi frejm (jer isto mora svaki da procita, samo se smanjuje vrijeme obrade)
+- 11520 bvp.csv vrijednosti za 180 sekundi videa ==> 64 vrijednosti po sekundi
+- lose performanse modela istreniranog na 4 subjecta, 4-StratifiedKFold
