@@ -18,13 +18,17 @@ from data_preprocess import z_score, find_peak
 
 yaml_file = "./setting.yaml"
 cfg = yaml.safe_load(open(yaml_file, 'r'))
-drop_num = cfg['train']['drop_num']
-step = cfg['train']['step']
-clip_len = cfg['train']['clip_len']
+# drop_num = cfg['train']['drop_num']
+# step = cfg['train']['step']
+# clip_len = cfg['train']['clip_len']
+drop_num = 35
+step = 60
+clip_len = 120
 
 # video_path = "/Volumes/externiMAC/UBFC-Phys/dataset/s1/vid_s1_T3.avi" # test - ima stresa
 # video_path = "/Users/filipjovanovic/Desktop/Multimedija/UBFC-Phys/s2/vid_s2_T3.avi"
-video_path = '/Users/filipjovanovic/Desktop/OneAI/VISION/V4V/V4V dataset/Phase 1_ Training_Validation sets/Videos/train-001_of_002/F001_T1.mkv'
+# video_path = '/Users/filipjovanovic/Desktop/OneAI/VISION/V4V/V4V dataset/Phase 1_ Training_Validation sets/Videos/train-001_of_002/F001_T1.mkv'
+video_path = '/Users/filipjovanovic/Downloads/1000012036.mp4'
 # video_path = "/Volumes/externiMAC/UBFC-Phys/dataset/s2/vid_s2_T2.avi" # control - nema stresa
 dataset_root = "./tmp_values"
 
@@ -155,6 +159,7 @@ if __name__ == '__main__':
                 # ako je pronadjeno lice na frejmu
                 if frame_num % 35 == 0: # stampaj svaki 35. da vidis da radi program
                     print("Found face on frame {0}".format(frame_num))
+
                 face_image = Image.fromarray(predicted_array.astype(np.uint8))
                 frame_face = np.array(face_image)
 
@@ -186,7 +191,7 @@ if __name__ == '__main__':
     # predict ********************************************************************************************************************************
     # Load the trained model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = torch.load("trained_models/MTASR_pa0.75_hr1_2_2100.pth", map_location=device, weights_only=False)
+    model = torch.load("/Users/filipjovanovic/Desktop/OneAI/VISION/MTASR_rad_trening_modeli/trained_models/faceBoxes/segment_10s_framerate_1_pp1_hr0.75/MTASR_pa0.75_hr1_2_120.pth", map_location=device, weights_only=False)
     model.to(device)
     model.eval()  # Set to evaluation mode
 
